@@ -1,0 +1,10 @@
+### Publish post event to Kafka
+POST http://localhost:8080/posts
+Content-Type: application/json
+
+{
+  "id": 1,
+  "title": "Hello SSL Kafka",
+  "userId": "user-42",
+  "body": "Mensagem via SSL"
+}
