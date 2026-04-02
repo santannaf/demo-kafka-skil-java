@@ -103,7 +103,7 @@ Event sent successfully: id=1
 
 ## Gerando os certificados SSL (opcional)
 
-Os certificados ja estao incluidos no repositorio. Para regenera-los:
+Os certificados já estão incluídos no repositório. Para regenerá-los:
 
 ```bash
 cd certs
@@ -130,3 +130,20 @@ rm kafka-broker.crt
 # Copiar para o classpath
 cp kafka.keystore.p12 kafka.truststore.p12 ../src/main/resources/ssl/
 ```
+
+### Por que o mesmo keystore/truststore funciona nos dois lados?
+
+Neste demo, os arquivos em `certs/` (montados no broker) e `src/main/resources/ssl/` (usados pela app) sao copias identicas. Isso funciona porque:
+
+- O **broker** usa o `kafka.keystore.p12` para apresentar seu certificado SSL nas conexoes (identidade do servidor).
+- A **app** usa o `kafka.truststore.p12` para **confiar** no certificado do broker.
+
+Como o certificado e auto-assinado, o truststore contem exatamente o certificado que foi gerado no keystore — por isso o mesmo par serve para ambos os lados. A app tambem recebe o keystore na configuracao (`ssl-key-store-location`), mas ele nao e utilizado na pratica porque o broker esta com `KAFKA_SSL_CLIENT_AUTH: none` (nao exige certificado do cliente).
+
+### Em producao
+
+Num cenario real, os certificados do broker e do cliente seriam **distintos**:
+
+1. **Broker** — teria um keystore com certificado assinado por uma CA (interna ou publica), nao auto-assinado.
+2. **App (cliente)** — teria um truststore contendo apenas o certificado da CA (para confiar no broker), e **nao** uma copia do keystore do broker.
+3. **mTLS (opcional)** — se o broker exigir autenticacao mutua (`KAFKA_SSL_CLIENT_AUTH: required`), a app tambem precisaria de seu proprio keystore com um certificado de cliente assinado pela mesma CA (ou por outra CA confiavel pelo broker).
