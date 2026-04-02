@@ -36,3 +36,13 @@ tasks.named('test') {
 tasks.named('bootRun') {
     jvmArgs '--enable-native-access=ALL-UNNAMED'
 }
+
+tasks.named('processAot') {
+    def profiles = providers.gradleProperty('springProfiles').orElse('')
+    jvmArgs '-Dspring.profiles.active=' + profiles.get()
+}
+
+tasks.named('processTestAot') {
+    def profiles = providers.gradleProperty('springProfiles').orElse('')
+    jvmArgs '-Dspring.profiles.active=' + profiles.get()
+}
