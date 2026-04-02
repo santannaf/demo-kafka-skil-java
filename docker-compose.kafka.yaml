@@ -37,15 +37,18 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_AUTHORIZER_CLASS_NAME: kafka.security.authorizer.AclAuthorizer
-      KAFKA_ALLOW_EVERYONE_IF_NO_ACL_FOUND: "true"
+      KAFKA_ALLOW_EVERYONE_IF_NO_ACL_FOUND: "false"
+      # O listener PLAINTEXT (inter-broker e host) precisa de um super user
+      # para operar sem ACLs. O broker se conecta internamente como "ANONYMOUS".
+      KAFKA_SUPER_USERS: "User:ANONYMOUS"
       CONFLUENT_METRICS_ENABLE: 'true'
-      # SSL config
+      # SSL config (mTLS — broker exige certificado do cliente)
       KAFKA_SSL_KEYSTORE_FILENAME: kafka.keystore.p12
       KAFKA_SSL_KEYSTORE_CREDENTIALS: ssl_credentials
       KAFKA_SSL_KEY_CREDENTIALS: ssl_credentials
       KAFKA_SSL_TRUSTSTORE_FILENAME: kafka.truststore.p12
       KAFKA_SSL_TRUSTSTORE_CREDENTIALS: ssl_credentials
-      KAFKA_SSL_CLIENT_AUTH: none
+      KAFKA_SSL_CLIENT_AUTH: required
       KAFKA_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM: ""
     extra_hosts:
       - "host.docker.internal:172.17.0.1"

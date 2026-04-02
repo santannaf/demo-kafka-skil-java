@@ -64,13 +64,25 @@ docker compose -f docker-compose.kafka.yaml down
 ./gradlew bootRun --args='--spring.profiles.active=plaintext'
 ```
 
-### Modo SSL (porta 9093)
+### Modo SSL com mTLS + ACLs (porta 9093)
+
+O ambiente Docker usa mTLS (`KAFKA_SSL_CLIENT_AUTH: required`) e ACLs por topico. O broker identifica a aplicacao pelo CN do certificado do cliente (`CN=demo-kafka-skill`).
 
 ```bash
+# 1. Subir o ambiente
+docker compose -f docker-compose.kafka.yaml up -d
+
+# 2. Configurar as ACLs (permite CN=demo-kafka-skill produzir/consumir no posts-topic)
+./scripts/setup-acls.sh
+
+# 3. Rodar a aplicacao
 ./gradlew bootRun --args='--spring.profiles.active=ssl'
 ```
 
-Os certificados auto-assinados ja estao incluidos em `src/main/resources/ssl/` e sao referenciados via `classpath:` no profile SSL.
+Os certificados foram gerados pela lib (`spring-kafka/certs/generate-certs.sh --app-name demo-kafka-skill`) e ja estao incluidos no repositorio:
+
+- `certs/` — montados no container Kafka (broker keystore + truststore)
+- `src/main/resources/ssl/` — usados pela app (client keystore + truststore com CA)
 
 ## Testando
 

@@ -10,6 +10,8 @@ You are helping the user set up a client project that uses the `com.tanna.spring
 
 **Spring Boot 4.x / Java 21+ required.**
 
+> **IMPORTANT:** When creating configuration files in client projects, always prefer `application.properties`. Only create `application.yaml` / `application.yml` if the user explicitly requests YAML format. The examples below show both formats for reference, but `.properties` is the default when implementing.
+
 ---
 
 ## 1. Dependencies
@@ -35,9 +37,9 @@ implementation("org.apache.avro:avro:1.12.1")
 </dependency>
 
 <dependency>
-<groupId>org.apache.avro</groupId>
-<artifactId>avro</artifactId>
-<version>1.12.1</version>
+    <groupId>org.apache.avro</groupId>
+    <artifactId>avro</artifactId>
+    <version>1.12.1</version>
 </dependency>
 ```
 
@@ -68,11 +70,16 @@ services:
     ports:
       - "9092:9092"
       - "29092:29092"
+      - "9093:9093"
+    volumes:
+      - ./certs/kafka.keystore.p12:/etc/kafka/secrets/kafka.keystore.p12:ro
+      - ./certs/kafka.truststore.p12:/etc/kafka/secrets/kafka.truststore.p12:ro
+      - ./certs/ssl_credentials:/etc/kafka/secrets/ssl_credentials:ro
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ADVERTISED_HOST_NAME: localhost
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092,SSL://localhost:9093
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT,SSL:SSL
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
@@ -84,6 +91,14 @@ services:
       KAFKA_AUTHORIZER_CLASS_NAME: kafka.security.authorizer.AclAuthorizer
       KAFKA_ALLOW_EVERYONE_IF_NO_ACL_FOUND: "true"
       CONFLUENT_METRICS_ENABLE: 'true'
+      # SSL config
+      KAFKA_SSL_KEYSTORE_FILENAME: kafka.keystore.p12
+      KAFKA_SSL_KEYSTORE_CREDENTIALS: ssl_credentials
+      KAFKA_SSL_KEY_CREDENTIALS: ssl_credentials
+      KAFKA_SSL_TRUSTSTORE_FILENAME: kafka.truststore.p12
+      KAFKA_SSL_TRUSTSTORE_CREDENTIALS: ssl_credentials
+      KAFKA_SSL_CLIENT_AUTH: none
+      KAFKA_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM: ""
     extra_hosts:
       - "host.docker.internal:172.17.0.1"
 
@@ -130,8 +145,7 @@ services:
       - bash
       - -c
       - |
-        echo "Waiting two minutes for Kafka brokers to start and
-               necessary topics to be available"
+        echo "Waiting for Kafka brokers to start and necessary topics to be available"
         sleep 60
         /etc/confluent/docker/run
     extra_hosts:
@@ -150,14 +164,72 @@ docker compose -f docker-compose.kafka.yaml down
 
 ### Available endpoints after startup
 
-| Service                 | URL                     | Description                       |
-|-------------------------|-------------------------|-----------------------------------|
-| Kafka Broker (internal) | `kafka:9092`            | For inter-container communication |
-| Kafka Broker (host)     | `localhost:29092`       | For application running on host   |
-| Schema Registry         | `http://localhost:8081` | Avro schema management            |
-| Control Center          | `http://localhost:9021` | Kafka cluster monitoring UI       |
+| Service                       | URL                     | Description                       |
+|-------------------------------|-------------------------|-----------------------------------|
+| Kafka Broker (internal)       | `kafka:9092`            | For inter-container communication |
+| Kafka Broker (host PLAINTEXT) | `localhost:29092`       | For application running on host   |
+| Kafka Broker (host SSL)       | `localhost:9093`        | For SSL connections from host     |
+| Schema Registry               | `http://localhost:8081` | Avro schema management            |
+| Control Center                | `http://localhost:9021` | Kafka cluster monitoring UI       |
 
-> **Note:** Use `localhost:29092` as `bootstrap-servers` in `application.properties`/`application.yaml` when running the application on the host machine. The `kafka:9092` address is for inter-container communication only.
+> **Note:** Use `localhost:29092` as `bootstrap-servers` in `application.properties` for PLAINTEXT connections. Use `localhost:9093` for SSL connections. The default setup should always prefer PLAINTEXT (`localhost:29092`); use SSL (`localhost:9093`) only when the user wants to test SSL locally.
+
+### SSL certificates for local Docker
+
+To use the SSL listener (`localhost:9093`), the certificates must be generated using the script included in the **library project** (`spring-kafka`), not in the client. The script uses `keytool`, which is part of the JDK — **JDK 21+ must be installed and on PATH**.
+
+```bash
+# No repositorio da lib (spring-kafka)
+cd certs
+
+# With defaults
+./generate-certs.sh
+
+# Customizing for your organization
+./generate-certs.sh --org MyCompany --location SaoPaulo --state SP --country BR
+
+# Customizing password and validity
+./generate-certs.sh --org MyCompany --password my-password --validity 730
+```
+
+Available options:
+
+| Option       | Default    | Description                       |
+|--------------|------------|-----------------------------------|
+| `--org`      | `MyOrg`    | Organization name                 |
+| `--location` | `City`     | City                              |
+| `--state`    | `State`    | State                             |
+| `--country`  | `BR`       | Country code (2 letters)          |
+| `--password` | `changeit` | Keystore password                 |
+| `--validity` | `365`      | Certificate validity in days      |
+
+This script generates certificates following the **production model** with a separate CA:
+
+| File                       | Content                                      | Used by        |
+|----------------------------|----------------------------------------------|----------------|
+| `ca-root.p12`              | CA keystore (private key + certificate)      | Admin only     |
+| `ca-root.crt`              | CA certificate in PEM format                 | Reference      |
+| `kafka.keystore.p12`       | Broker certificate signed by the CA          | Broker (Kafka) |
+| `kafka.client-keystore.p12`| Client certificate signed by the CA          | Client (App)   |
+| `kafka.truststore.p12`     | CA certificate (to validate the broker)      | Client (App)   |
+| `ssl_credentials`          | Keystore password (used by Confluent Docker) | Broker (Kafka) |
+
+**Trust flow:**
+1. The **broker** presents its certificate (signed by the CA) on SSL connections.
+2. The **client** validates the broker certificate using the truststore that contains the CA.
+3. The **client** presents its own certificate (signed by the same CA) — required for mTLS.
+
+After generating, copy the necessary files to the client project:
+
+```bash
+# Broker files: copy to client's certs/ directory (for docker-compose volumes)
+cp certs/kafka.keystore.p12 certs/kafka.truststore.p12 certs/ssl_credentials <client-project>/certs/
+
+# Client app files: copy truststore + client keystore to the classpath
+cp certs/kafka.truststore.p12 certs/kafka.client-keystore.p12 <client-project>/src/main/resources/ssl/
+```
+
+> **IMPORTANT:** The client should NOT generate its own certificates. Always use the `generate-certs.sh` script from the library project (`spring-kafka/certs/`). This ensures the broker and client share the same CA trust chain.
 
 ---
 
@@ -201,6 +273,74 @@ fun main(args: Array<String>) {
 
 All properties are prefixed with `kafka.arch`.
 
+### Switching Between PLAINTEXT and SSL with Spring Profiles
+
+The recommended approach is to use **Spring profiles** to separate PLAINTEXT and SSL configurations. Create two profile-specific files and activate the desired one at startup:
+
+| Profile       | File                                | Port    | Use case                      |
+|---------------|-------------------------------------|---------|-------------------------------|
+| `plaintext`   | `application-plaintext.properties`  | `29092` | Local development (default)   |
+| `ssl`         | `application-ssl.properties`        | `9093`  | SSL testing / production-like |
+
+**Running with a profile:**
+```bash
+# PLAINTEXT (no certificates needed)
+./gradlew bootRun --args='--spring.profiles.active=plaintext'
+# or with Maven
+./mvnw spring-boot:run -Dspring-boot.run.arguments='--spring.profiles.active=plaintext'
+
+# SSL (requires certificates in src/main/resources/ssl/)
+./gradlew bootRun --args='--spring.profiles.active=ssl'
+# or with Maven
+./mvnw spring-boot:run -Dspring-boot.run.arguments='--spring.profiles.active=ssl'
+```
+
+**Profile file: `application-plaintext.properties`**
+```properties
+spring.application.name=my-service
+
+kafka.topic.my-topic=my-topic
+
+kafka.arch.common.bootstrap-servers=localhost:29092
+kafka.arch.common.schema-registry=http://localhost:8081
+kafka.arch.common.enable-connection-ssl-protocol-mode=false
+
+kafka.arch.producer.ack-producer-config=all
+kafka.arch.producer.compress-type=snappy
+
+kafka.arch.consumer.consumer-group-id=my-consumer-group
+kafka.arch.consumer.ack-consumer-config=manual
+kafka.arch.consumer.event-auto-offset-reset-config=latest
+kafka.arch.consumer.enable-avro-reader-config=false
+```
+
+**Profile file: `application-ssl.properties`**
+```properties
+spring.application.name=my-service
+
+kafka.topic.my-topic=my-topic
+
+kafka.arch.common.bootstrap-servers=localhost:9093
+kafka.arch.common.schema-registry=http://localhost:8081
+kafka.arch.common.enable-connection-ssl-protocol-mode=true
+kafka.arch.common.ssl-trust-store-location=classpath:ssl/kafka.truststore.p12
+kafka.arch.common.ssl-trust-store-password=changeit
+kafka.arch.common.ssl-key-store-location=classpath:ssl/kafka.client-keystore.p12
+kafka.arch.common.ssl-key-store-password=changeit
+
+kafka.arch.producer.ack-producer-config=all
+kafka.arch.producer.compress-type=snappy
+
+kafka.arch.consumer.consumer-group-id=my-consumer-group
+kafka.arch.consumer.ack-consumer-config=manual
+kafka.arch.consumer.event-auto-offset-reset-config=latest
+kafka.arch.consumer.enable-avro-reader-config=false
+```
+
+> **Note:** The `kafka.truststore.p12` contains the CA certificate (to trust the broker) and `kafka.client-keystore.p12` contains the client's own certificate signed by the same CA. Both are generated by the library's `generate-certs.sh` script.
+
+> **Note:** The base `application.properties` file should contain only properties that are common to all profiles (e.g., `spring.application.name`). Kafka-specific properties should go in the profile files.
+
 ### 4.1 Basic Example (without SSL)
 
 #### application.properties
@@ -242,6 +382,24 @@ kafka:
 
 Use `certificate-type` when the `.p12` files are embedded in the library's resources. The lib resolves the correct certificate based on `certificate-type` and `environment`.
 
+#### application.properties
+```properties
+kafka.arch.common.bootstrap-servers=broker:9093
+kafka.arch.common.schema-registry=https://schema-registry:8081
+kafka.arch.common.enable-connection-ssl-protocol-mode=true
+kafka.arch.common.certificate-type=<sua_area>
+kafka.arch.common.environment=stg
+kafka.arch.common.ssl-trust-store-password=changeit
+kafka.arch.common.ssl-key-store-password=changeit
+
+kafka.arch.producer.ack-producer-config=all
+kafka.arch.producer.compress-type=snappy
+
+kafka.arch.consumer.consumer-group-id=my-consumer-group
+kafka.arch.consumer.ack-consumer-config=manual
+kafka.arch.consumer.event-auto-offset-reset-config=earliest
+```
+
 #### application.yaml
 ```yaml
 kafka:
@@ -270,6 +428,24 @@ Use `ssl-trust-store-location` and `ssl-key-store-location` when the client prov
 - Classpath: `classpath:certs/truststore.p12`
 - Nome simples: `truststore.p12` (tenta classpath primeiro, senao assume filesystem)
 
+#### application.properties
+```properties
+kafka.arch.common.bootstrap-servers=broker:9093
+kafka.arch.common.schema-registry=https://schema-registry:8081
+kafka.arch.common.enable-connection-ssl-protocol-mode=true
+kafka.arch.common.ssl-trust-store-location=/opt/certs/truststore.p12
+kafka.arch.common.ssl-trust-store-password=changeit
+kafka.arch.common.ssl-key-store-location=/opt/certs/keystore.p12
+kafka.arch.common.ssl-key-store-password=changeit
+
+kafka.arch.producer.ack-producer-config=all
+kafka.arch.producer.compress-type=snappy
+
+kafka.arch.consumer.consumer-group-id=my-consumer-group
+kafka.arch.consumer.ack-consumer-config=manual
+kafka.arch.consumer.event-auto-offset-reset-config=earliest
+```
+
 #### application.yaml
 ```yaml
 kafka:
@@ -297,6 +473,16 @@ kafka:
 
 ### 4.4 Secondary Connection
 
+#### application.properties
+```properties
+kafka.arch.common.bootstrap-servers=primary-broker:9092
+kafka.arch.common.schema-registry=http://primary-registry:8081
+kafka.arch.common.enable-another-connection=true
+kafka.arch.common.another-bootstrap-servers=secondary-broker:9092
+kafka.arch.common.another-schema-registry=http://secondary-registry:8081
+```
+
+#### application.yaml
 ```yaml
 kafka:
   arch:
@@ -369,6 +555,7 @@ When `enable-another-connection=true`, the library registers additional beans: `
 | `enable-async-ack`                        | boolean | `false`  | -                                                                              |
 | `max-attempts-consumer-record`            | int     | `3`      | -                                                                              |
 | `interval-retry-attempts-consumer-record` | int     | `10000`  | ms                                                                             |
+| `enable-virtual-threads`                  | boolean | `false`  | Uses virtual threads for listener container (Java 21+)                         |
 
 ---
 
@@ -562,6 +749,15 @@ class PostEventConsumer {
 ## 8. Batch Consumer Example
 
 ### Configuration
+
+#### application.properties
+```properties
+kafka.arch.consumer.enable-batch-listener=true
+kafka.arch.consumer.ack-consumer-config=manual
+kafka.arch.consumer.max-poll-records=100
+```
+
+#### application.yaml
 ```yaml
 kafka:
   arch:
@@ -668,40 +864,43 @@ With `enable-another-connection=true`, additional beans: `anotherProducerFactory
 
 ## 11. Testes de Integração SSL
 
-A lib inclui testes de integração SSL com certificados `.p12` auto-assinados e Testcontainers. Esses testes validam a conexão real na porta 9093.
+A lib inclui testes de integração SSL com Testcontainers. Esses testes validam a conexão real na porta 9093.
 
-### Estrutura dos certificados de teste
+### Estrutura dos certificados
+
+Os certificados para o ambiente Docker local e testes sao gerados pelo script `certs/generate-certs.sh` na raiz do repositorio da lib. O script segue o modelo de producao com CA separada:
 
 ```
-src/test/resources/ssl/
-├── kafka.keystore.p12     # Keystore com chave privada + certificado auto-assinado
-├── kafka.truststore.p12   # Truststore com o certificado do broker importado
-└── ssl_credentials        # Arquivo texto com a senha ("changeit")
+certs/
+├── generate-certs.sh         # Script de geracao (executar para regenerar)
+├── ca-root.p12               # CA keystore (chave privada + certificado)
+├── ca-root.crt               # Certificado da CA em PEM
+├── kafka.keystore.p12        # Keystore do broker (certificado assinado pela CA)
+├── kafka.client-keystore.p12 # Keystore do cliente (certificado assinado pela CA)
+├── kafka.truststore.p12      # Truststore (contem apenas a CA)
+└── ssl_credentials           # Senha dos keystores (default: "changeit")
 ```
 
-### Gerando certificados de teste
+The script requires **JDK 21+** installed (for the `keytool` command). To regenerate with custom values:
 
 ```bash
-# Gerar keystore com certificado auto-assinado
-keytool -genkeypair -alias kafka-broker -keyalg RSA -keysize 2048 -validity 365 \
-  -dname "CN=localhost,OU=Test,O=Test,L=Test,ST=Test,C=BR" \
-  -ext "SAN=DNS:localhost,DNS:kafka,IP:127.0.0.1" \
-  -keystore kafka.keystore.p12 -storetype PKCS12 \
-  -storepass changeit -keypass changeit
-
-# Exportar o certificado
-keytool -exportcert -alias kafka-broker -keystore kafka.keystore.p12 \
-  -storepass changeit -file kafka-broker.crt
-
-# Importar no truststore
-keytool -importcert -alias kafka-broker -file kafka-broker.crt \
-  -keystore kafka.truststore.p12 -storetype PKCS12 \
-  -storepass changeit -noprompt
-
-rm kafka-broker.crt
+cd certs
+./generate-certs.sh --org MyCompany --location SaoPaulo --state SP
 ```
 
-> **IMPORTANTE:** O certificado do keystore DEVE ser importado no truststore. Sem isso, o Kafka falha com `PKIX path building failed`.
+### Fluxo de confianca (modelo producao)
+
+```
+CA (ca-root)
+  |
+  +-- assina --> certificado do broker  (kafka.keystore.p12)
+  |
+  +-- assina --> certificado do cliente (kafka.client-keystore.p12)
+  |
+  +-- confia <-- truststore do cliente  (kafka.truststore.p12 contem ca-root.crt)
+```
+
+> **IMPORTANTE:** O truststore do cliente contem o certificado da CA, nao o certificado do broker diretamente. O client-keystore contem a identidade do cliente, assinada pela mesma CA.
 
 ### Container Kafka com SSL (Testcontainers)
 
@@ -710,12 +909,12 @@ O teste usa `GenericContainer` com `confluentinc/cp-kafka:7.4.0` em KRaft mode. 
 1. **Dois listeners**: `BROKER:PLAINTEXT` (inter-broker) + `SSL` (clientes externos). Usar SSL para inter-broker causa erro de validação com certificados auto-assinados.
 
 2. **Advertised listeners dinâmico**: O Testcontainers mapeia portas aleatoriamente. Para resolver isso, o container usa um script que espera por um arquivo de sinal antes de iniciar o Kafka:
-   ```java
-   .withCommand("sh", "-c",
-     "while [ ! -f /tmp/kafka_listeners ]; do sleep 0.1; done && " +
-     "export KAFKA_ADVERTISED_LISTENERS=$(cat /tmp/kafka_listeners) && " +
-     "/etc/confluent/docker/run")
-   ```
+```java
+.withCommand("sh", "-c",
+  "while [ ! -f /tmp/kafka_listeners ]; do sleep 0.1; done && " +
+  "export KAFKA_ADVERTISED_LISTENERS=$(cat /tmp/kafka_listeners) && " +
+  "/etc/confluent/docker/run")
+```
 
 3. **Wait strategy no-op**: A estratégia padrão espera a porta abrir, mas o Kafka só inicia após o sinal. Usa-se uma `AbstractWaitStrategy` vazia + polling manual via `AdminClient`.
 
