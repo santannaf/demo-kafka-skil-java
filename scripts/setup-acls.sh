@@ -26,7 +26,7 @@ echo "Configurando ACLs para CN=${APP_CN}..."
 echo ""
 
 # --------------------------------------------------------------------------
-# Criar o topico (caso nao exista)
+# Criar o tópico (caso não exista)
 # --------------------------------------------------------------------------
 echo "==> Criando topico '${TOPIC}' (se nao existir)..."
 docker exec kafka kafka-topics --bootstrap-server "${BROKER}" \
@@ -36,23 +36,23 @@ docker exec kafka kafka-topics --bootstrap-server "${BROKER}" \
   --replication-factor 1
 
 # --------------------------------------------------------------------------
-# ACL: permitir PRODUCE no topico
+# ACL: permitir PRODUCE no tópico
 # --------------------------------------------------------------------------
 echo "==> ACL: permitir ${APP_CN} produzir em '${TOPIC}'..."
 docker exec kafka kafka-acls --bootstrap-server "${BROKER}" \
   --add \
-  --allow-principal "User:CN=${APP_CN}" \
+  --allow-principal "User:${APP_CN}" \
   --operation Write \
   --operation Describe \
   --topic "${TOPIC}"
 
 # --------------------------------------------------------------------------
-# ACL: permitir CONSUME do topico
+# ACL: permitir CONSUME do tópico
 # --------------------------------------------------------------------------
 echo "==> ACL: permitir ${APP_CN} consumir de '${TOPIC}'..."
 docker exec kafka kafka-acls --bootstrap-server "${BROKER}" \
   --add \
-  --allow-principal "User:CN=${APP_CN}" \
+  --allow-principal "User:${APP_CN}" \
   --operation Read \
   --operation Describe \
   --topic "${TOPIC}"
@@ -63,7 +63,7 @@ docker exec kafka kafka-acls --bootstrap-server "${BROKER}" \
 echo "==> ACL: permitir ${APP_CN} usar o group '${GROUP}'..."
 docker exec kafka kafka-acls --bootstrap-server "${BROKER}" \
   --add \
-  --allow-principal "User:CN=${APP_CN}" \
+  --allow-principal "User:${APP_CN}" \
   --operation Read \
   --group "${GROUP}"
 
@@ -75,7 +75,7 @@ echo "==> ACLs configuradas:"
 docker exec kafka kafka-acls --bootstrap-server "${BROKER}" --list
 
 echo ""
-echo "Setup concluido. A aplicacao '${APP_CN}' pode produzir e consumir do topico '${TOPIC}'."
+echo "Setup concluído. A aplicação '${APP_CN}' pode produzir e consumir do tópico '${TOPIC}'."
 echo ""
 echo "Para testar:"
 echo "  ./gradlew bootRun --args='--spring.profiles.active=ssl'"

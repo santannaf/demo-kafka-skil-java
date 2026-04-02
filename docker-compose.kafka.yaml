@@ -50,6 +50,10 @@ services:
       KAFKA_SSL_TRUSTSTORE_CREDENTIALS: ssl_credentials
       KAFKA_SSL_CLIENT_AUTH: required
       KAFKA_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM: ""
+      # Extrai apenas o CN do DN completo do certificado para usar como principal.
+      # Sem isso, o principal seria "CN=demo-kafka-skill,OU=App,O=MyOrg,L=City,ST=State,C=BR"
+      # em vez de "CN=demo-kafka-skill".
+      KAFKA_SSL_PRINCIPAL_MAPPING_RULES: "RULE:^CN=([^,]+).*$$/$$1/,DEFAULT"
     extra_hosts:
       - "host.docker.internal:172.17.0.1"
 
